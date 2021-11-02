@@ -1,0 +1,33 @@
+{
+    "name": "@vidbeo/player-api",
+    "version": "1.0.0",
+    "description": "Control a player embedded in an iframe",
+    "author": "Vidbeo <https://www.vidbeo.com>",
+    "private": true,
+    "repository": "vidbeo/player-api",
+    "keywords": [
+        "vidbeo",
+        "player",
+        "api",
+        "iframe"
+    ],
+    "scripts": {
+        "clean": "rimraf dist/*",
+        "lint": "eslint src/ test/",
+        "format": "prettier 'src/**/*.js' --write",
+        "test": "nyc --cache --reporter=text --reporter=html ava"
+    },
+    "main": "dist/player.js",
+    "files": [
+        "src",
+        "dist"
+    ],
+    "dependencies": {},
+    "devDependencies": {
+        "ava": "^3.15.0",
+        "eslint": "^7.7.0",
+        "nyc": "^15.1.0",
+        "prettier": "^2.4.1",
+        "rimraf": "^3.0.2"
+    }
+}
