@@ -15,19 +15,32 @@
         "clean": "rimraf dist/*",
         "lint": "eslint src/ test/",
         "format": "prettier 'src/**/*.js' --write",
-        "test": "nyc --cache --reporter=text --reporter=html ava"
+        "test": "nyc --cache --reporter=text ava",
+        "build": "rollup --config",
+        "watch:build": "rollup --config --watch --environment STAGE:local"
     },
     "main": "dist/player.js",
+    "module": "dist/player.es.js",
     "files": [
-        "src",
-        "dist"
+        "dist",
+        "README"
     ],
-    "dependencies": {},
+    "dependencies": {
+        "loglevel": "^1.7.1"
+    },
     "devDependencies": {
+        "@babel/core": "^7.16.0",
+        "@babel/preset-env": "^7.16.0",
+        "@rollup/plugin-babel": "^5.3.0",
+        "@rollup/plugin-commonjs": "^21.0.1",
+        "@rollup/plugin-node-resolve": "^13.0.6",
+        "@rollup/plugin-replace": "^3.0.0",
         "ava": "^3.15.0",
         "eslint": "^7.7.0",
         "nyc": "^15.1.0",
         "prettier": "^2.4.1",
-        "rimraf": "^3.0.2"
+        "rimraf": "^3.0.2",
+        "rollup": "^2.59.0",
+        "rollup-plugin-terser": "^7.0.2"
     }
 }
