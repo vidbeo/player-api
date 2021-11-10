@@ -1,120 +1,35 @@
-
 "use strict";
 
-// need a logger to avoid calling console.log which is slow and may not even be available:
-import log from 'loglevel';
+const loggingEnabled = false;
 
-// set at bundle time
-const loggingEnabled = __LOGGING_ENABLED__;
-const iframeDomain = "__EMBED_BASE_URL__";
+// need a logger to avoid calling console.log:
+import log from "loglevel";
 
-// const
-const iframeOrigin = "https://" + iframeDomain;
-const iframePrefix = iframeOrigin;
-const isBrowser =
-  typeof window !== "undefined" && typeof window.document !== "undefined"; // a browser has a 'window'
-const isServer =
-  (typeof process !== "undefined" &&
-    process.versions != null &&
-    process.versions.node != null) ||
-  typeof caches.default != null; // detect Node or CF
-const supportsPostMessage =
-  typeof window !== "undefined" && typeof window.postMessage !== "undefined";
-// the embed options are all of the supported options {} values which are used either in constructing an iframe (e.g 'width') or passed
-// in the iframe's src URL (e.g 'colour'). And within those query string params are ones that may be checked server-side (e.g 'jwt') or
-// used by the player JS (e.g autoplay)
-const supportedEmbedOptions = [
-  "aspectratio",
-  "autoplay",
-  "colour",
-  "controls",
-  "buttons",
-  "dnt",
-  "height",
-  "id",
-  "jwt",
-  "keyboard",
-  "loop",
-  "muted",
-  "playsinline",
-  "preload",
-  "quality",
-  "responsive",
-  "t",
-  "title",
-  "track",
-  "width",
-];
-const supportedEvents = [
-  "durationchange",
-  "ended",
-  "error",
-  "fullscreenchange",
-  "hotspotclicked",
-  "loadedmetadata", // can be used to get size
-  "pause",
-  "play",
-  "playing",
-  "progress",
-  "qualitychange",
-  "playbackratechange",
-  "ready",
-  "seeked",
-  "seeking",
-  "trackchange",
-  "timeupdate",
-  "volumechange",
-];
-const supportedMethods = [
-  "exitFullscreen",
-  "getBuffered",
-  "getColour",
-  "getCurrentTime",
-  "getDuration",
-  "getEmbed",
-  "getEnded",
-  "getFullscreen",
-  "getHeight",
-  "getId",
-  "getLoop",
-  "getMuted",
-  "getPaused",
-  "getPlaybackRate",
-  "getPlayed",
-  "getQualities",
-  "getQuality",
-  "getSeekable",
-  "getSeeking",
-  "getTracks",
-  "getTitle",
-  "getUrl",
-  "getVolume",
-  "getWidth",
-  "off",
-  "on",
-  "pause",
-  "play",
-  "ready",
-  "requestFullscreen",
-  "setColour",
-  "setCurrentTime",
-  "setLoop",
-  "setMuted",
-  "setPlaybackRate",
-  "setQuality",
-  "setVolume",
-];
-
-// variables
-var weakmapPlayer = new WeakMap();
-var weakmapIsReady = new WeakMap();
-var weakmapCallbacks = new WeakMap(); // note: we store event and method callbacks in the same map
+import {
+  isBrowser,
+  isServer,
+  supportsPostMessage,
+  supportedEvents,
+  supportedMethods,
+  isVidbeoIframe,
+  isVidbeoOrigin,
+  postMessage,
+  processMessage,
+  saveCallback,
+  getCallbacks,
+  removeCallback,
+  swapCallbacks,
+  shiftCallbacks,
+  extractValidEmbedParams,
+  isIdValid,
+  buildIframeSrc,
+} from "./functions";
 
 // logging?
 if (!isBrowser || !loggingEnabled) {
-  log.setLevel('silent');
+  log.setLevel("silent");
 } else {
-  log.setDefaultLevel('debug');
+  log.setDefaultLevel("debug");
 }
 
 // before going any further, check the player API will work. We need at minimum postMessage if it's a browser,
@@ -125,440 +40,9 @@ if (!isServer && !supportsPostMessage) {
   throw new Error("The Player API is not supported");
 }
 
-/**
- * Is the element used with the Vidbeo.Player(element) already one of our iframes?
- *
- * @param {Element} element
- * @return {Boolean}
- */
-function isVidbeoIframe (element) {
-  log.info("isVidbeoIframe");
-
-  if (!element || element == null || !element instanceof Element) {
-    return false;
-  }
-
-  // check it is an iframe
-  if (element.nodeName !== "IFRAME") {
-    return false;
-  }
-
-  // check it has a src
-  var src = element.getAttribute("src");
-  if (typeof src !== "string" || !src.startsWith("https")) {
-    // no src or if there is one, not prefixed with https, so we don't want that
-    return false;
-  }
-
-  // does its src have our domain in? This can be refined with a regex maybe
-  if (!src.startsWith(iframeOrigin) && src.indexOf(iframeDomain) === -1) {
-    return false;
-  }
-
-  // else looks good
-  //log.info("isVidbeoIframe: it is");
-  return true;
-}
-
-/**
- * Is the origin of a message from our iframe's domain?
- *
- * @param {String} domain
- * @returns {Boolean}
- */
-function isVidbeoOrigin (origin) {
-  log.info("isVidbeoOrigin", origin);
-
-  if (!origin || origin == null || origin === "") {
-    return false;
-  }
-
-  let permittedOrigins = [iframeOrigin, iframeOrigin + ".local"];
-
-  return permittedOrigins.includes(origin);
-}
-
-/**
- * Send a message to an iframe (because it is on a different domain, can't interact with it directly)
- *
- * We don't need a type param because we will only ever send a message TO an iframe if calling a method on it. Whereas
- * the player iframe may send a message that's an event (type event) or a response to a method (type event)
- *
- * @param {Player} player
- * @param {String} name The name of a method
- * @param {Object} value
- * @returns
- */
-function postMessage (player, name = "", value = null) {
-  log.info("postMessage", name, value);
-
-  // check the player iframe has a window we can post the message to:
-  if (
-    !player.element.contentWindow ||
-    !player.element.contentWindow.postMessage
-  ) {
-    log.warn("The iframe embed could not be contacted");
-    throw new Error("The iframe embed could not be contacted");
-  }
-
-  // every message sent TO an iframe calls a method, so set type as 'method'
-  let message = {
-    type: "method",
-    name: name, // name of the method
-    value: null, // assume not needed for this method
-  };
-  // ... some methods will need a value e.g a value for the new volume
-  // note: can't use a !value check as some methods use a boolean false value
-  if (value != null) {
-    message.value = value;
-  }
-
-  player.element.contentWindow.postMessage(message, player.origin);
-}
-
-/**
- * Process the data from a message
- *
- * @param {Player} player
- * @param {Object} data This is an object like {type: 'event', name: 'play', value: {}}
- * @returns
- */
-function processMessage (player, data) {
-  log.info("processMessage");
-
-  // if the data is a string, it will be JSON, so parse it as we want an object (this
-  // should not be the case with modern browsers as they all seem to use objects):
-  if (typeof data === "string") {
-    try {
-      data = JSON.parse(data);
-    } catch (error) {
-      log.warn(error);
-      return false;
-    }
-  }
-  // ... now we know we have an object to work with
-
-  // if the message did not return any value, set it as null so don't get any undefined error:
-  if (typeof data.value === "undefined") {
-    data.value = null;
-  }
-
-  var valueToReturn = null; // some methods/events may return a value. For others there is no need
-
-  // these are the callbacks we need to call, if any, in response to receiving this message:
-  var callbacks = [];
-
-  if (
-    data.value &&
-    typeof data.value === "object" &&
-    typeof data.value.error === "string"
-  ) {
-    // the message value contains an error so we need to reject any Promise so it is handled by any catch()/error handler, not
-    // by the normal function
-    log.info("processMessage the message says there was an error", data);
-
-    // see if there was a catch/error handler for this method/event:
-    let promises = getCallbacks(player, data.type + ":" + data.name); // e.g "method:setVolume"
-    promises.forEach(function (promise) {
-      log.info(
-        "processMessage reject the promise with this error message",
-        data.value.error
-      );
-      var error = new Error(data.value.error); // an error event should send a value like {error: "reason"}
-      error.name = "Error"; // could use if want to classify a type of error
-      promise.reject(error);
-
-      // ... and now remove that callback
-      removeCallback(player, data.type + ":" + data.name, promise);
-    });
-  } else {
-    // a method was successfully called (e.g setVolume), or an event happened which is not an error (e.g timeupdate)
-
-    if (data.type === "method") {
-      log.info(
-        "processMessage this message was in response to a method",
-        data
-      );
-
-      // unlike an event, which will always have a callback to receive the value, methods may not have a callback. Someone
-      // might call e.g player.setVolume(0.5) with no .then/.catch afterwards
-      var callback = shiftCallbacks(player, "method:" + data.name); // since we use one array, prefix with [type:]
-      if (callback) {
-        log.info(
-          "processMessage there was a callback for method:" + data.name
-        );
-        callbacks.push(callback);
-        valueToReturn = data.value;
-      }
-    }
-
-    if (data.type === "event") {
-      log.info("processMessage this message was to notify an event", data);
-
-      // an event should have at least one callback
-      callbacks = getCallbacks(player, "event:" + data.name);
-      valueToReturn = data.value;
-    }
-
-    // call each callback in the array
-    log.info("processMessage call each callback", callbacks);
-    callbacks.forEach(function (callback) {
-      try {
-        if (typeof callback === "function") {
-          // it's a function so call it with the value (if any)
-          log.info(
-            "Call this callback function. The value to pass to it, if any:",
-            valueToReturn
-          );
-          callback.call(player, valueToReturn);
-        } else {
-          // it's a Promise so resolve with the value (if any)
-          log.info(
-            "Resolve this callback Promise. The value to pass to it, if any:",
-            valueToReturn
-          );
-          callback.resolve(valueToReturn);
-        }
-      } catch (e) {
-        log.error(e);
-      }
-    });
-  }
-}
-
-/**
- * Save a callback for a method or event
- *
- * @param {Player} player
- * @param {String} label (combined type and name e.g "event:timeupdate")
- * @param {Function|Promise} callback
- * @returns
- */
-function saveCallback (player, label, callback) {
-  log.info("saveCallback", label);
-
-  // get all the callbacks so far for this player
-  let callbacks = weakmapCallbacks.get(player.element) || {};
-  if (!(label in callbacks)) {
-    // it's NOT already in there, so initialise it with an array. Use an array
-    // as someone may want multiple callbacks for the same event
-    log.info("saveCallback: initialise the array for:", label);
-    callbacks[label] = [];
-  }
-
-  // add it
-  log.info("saveCallback: push on to the array the callback for:", label);
-  callbacks[label].push(callback);
-
-  // ... and update the global map
-  weakmapCallbacks.set(player.element, callbacks);
-}
-
-/**
- * Get callbacks for a method or event
- *
- * @param {Player} player
- * @param {String} label (combined type and name e.g "event:timeupdate")
- * @returns {Array}
- */
-function getCallbacks (player, label) {
-  log.info("getCallbacks", label);
-
-  let callbacks = weakmapCallbacks.get(player.element) || {};
-
-  if (typeof callbacks[label] === "undefined") {
-    return [];
-  }
-
-  return callbacks[label];
-}
-
-/**
- * Remove callback for a method or event
- *
- * @param {Player} player
- * @param {String} label (combined type and name e.g "event:timeupdate")
- * @param {Function} callback
- * @returns {Boolean}
- */
-function removeCallback (player, label, callback) {
-  log.info("removeCallback", label);
-
-  let callbacks = weakmapCallbacks.get(player.element) || {};
-
-  if (!callbacks[label] || callbacks[label].length === 0) {
-    // none existed to begin with so effectively it is now removed
-    return true;
-  }
-
-  if (!callback) {
-    // no callback was provided, so wipe any that are there for this label as don't want any now
-    callbacks[label] = [];
-    weakmapCallbacks.set(player.element, callbacks);
-    return true;
-  }
-
-  // else there are possibly callback(s) defind for it so
-  // locate this particular one:
-  let pos = callbacks[label].indexOf(callback);
-  if (pos !== -1) {
-    // found it
-    callbacks[label].splice(pos, 1); // move the rest along
-  }
-  // ... and update the callbacks with that one removed:
-  weakmapCallbacks.set(player.element, callbacks);
-
-  if (callbacks[label].length !== 0) {
-    return false;
-  }
-
-  return true;
-}
-
-/**
- * Move callbacks between elements
- *
- * @param {Element} from
- * @param {Element} to
- * @returns
- */
-function swapCallbacks (from, to) {
-  log.info("swapCallbacks");
-
-  let callbacks = weakmapCallbacks.get(from);
-
-  weakmapCallbacks.set(to, callbacks);
-  weakmapCallbacks.delete(from);
-}
-
-/**
- * Return the first callback and remove it so it isn't called again (so it's then used). So like
- * in response to a method being called, we want that callback called, but not called again as it's used
- *
- * @param {Player} player
- * @param {String} label (combined type and name e.g "event:timeupdate")
- * @returns {Function|Boolean}
- */
-function shiftCallbacks (player, label) {
-  log.info("shiftCallbacks", label);
-
-  let callbacks = getCallbacks(player, label); // e.g "event:timeupdate"
-
-  if (callbacks.length === 0) {
-    // there are none set, so can't
-    return false;
-  }
-
-  let callback = callbacks.shift();
-  removeCallback(player, label, callback);
-
-  // return the removed one:
-  log.info("shiftCallbacks can use this (now removed) callback", callback);
-  return callback;
-}
-
-/**
- * If someone has passed an object of options, some params may not be supported like {abc: 123}. So
- * extract only the ones that are and ignore any that aren't
- *
- * @param {Object} options
- * @returns {Object}
- */
-function extractValidEmbedParams (options = {}) {
-  log.info("extractValidEmbedParams", options);
-
-  let acceptedOptions = {}; // assume none
-
-  for (const [key, value] of Object.entries(options)) {
-    //console.log(`${key}: ${value}`);
-
-    if (supportedEmbedOptions.includes(key)) {
-      // all good e.g 'autoplay'
-      acceptedOptions[key] = value;
-    }
-  }
-
-  return acceptedOptions;
-}
-
-/**
- * Is a video id valid?
- *
- * @param {String} id
- * @returns {Boolean}
- */
-function isIdValid (id = "") {
-  log.info("isIdValid", id);
-
-  // check its length. Currently legacy IDs are 10 characters and new ones are 21
-  if (id.length !== 10 && id.length !== 21) {
-    return false;
-  }
-
-  // ok, it's length is ok so now check it contains only valid nanoid characters:
-  return /^([a-zA-Z0-9_-]+)$/.test(id);
-}
-
-/**
- * Build an iframe embed src
- *
- * @param {Object} options This must include at minimum an id {id: ''}
- * @returns {String}
- */
-function buildIframeSrc (options = {}) {
-  log.info("buildIframeSrc", options);
-
-  // double-check there is an id:
-  log.info("buildIframeSrc: check for an id");
-  if (typeof options.id !== "string" || !isIdValid(options.id)) {
-    return "";
-  }
-
-  let src = iframePrefix + "/" + options.id;
-  // next we need to include params in the query string based on the options. Some
-  // options are used for iframe attributes, like width and height. However ones
-  // like colour are passed to the iframe in the query string. So there is a consistent
-  // way for people that aren't using the JS SDK:
-  log.info("buildIframeSrc: build query string");
-  let queryStringParams = []; // assume none
-  for (let [key, value] of Object.entries(options)) {
-    log.info("buildIframeSrc", key, value);
-
-    // first, exclude any options that should not be in the query string
-    if (
-      ["aspectratio", "height", "id", "responsive", "width"].includes(key)
-    ) {
-      log.info(
-        "buildIframeSrc skipping over this as its not relevant to the query string",
-        key
-      );
-      continue;
-    }
-
-    // next, if the value is a boolean true or false, we don't want to send those
-    // as strings in a URL like "true" so convert them to 1/0:
-    if (typeof value === "boolean") {
-      if (value) {
-        value = 1; // turn it into '1'
-      } else {
-        value = 0; // turn it into '0'
-      }
-    }
-
-    // now add the key=value to the src. We know the key is URI-safe as it is one
-    // of our alphanumeric strings but the value may not be:
-    queryStringParams.push(key + "=" + encodeURIComponent(value));
-  }
-
-  log.info("buildIframeSrc queryStringParams", queryStringParams);
-
-  if (queryStringParams.length > 0) {
-    src += "?" + queryStringParams.join("&"); // join key=value with &
-  }
-
-  log.info("buildIframeSrc src", src);
-  return src;
-}
+// variables
+var weakmapPlayer = new WeakMap();
+var weakmapIsReady = new WeakMap();
 
 /**
  * This contains the Player to export
@@ -568,24 +52,22 @@ class Player {
    * Constructor. Create a player. This is the Vidbeo.Player(element, options)
    *
    * @param {String|Element}
-   * @param {Object} options Use to set params that would otherwise be set in the query string e.g 'colour', 'autoplay'
+   * @param {Object} options Use to set params e.g 'id', 'colour'
    * @return {Player}
    */
   constructor (element, options = {}) {
     log.info("Player constructor", options);
 
+    // the element param is required
     if (element == null || typeof element === "undefined") {
       // no element passed (e.g if use: var iframe = document.querySelector('iframe') ... but have no iframe on the page at that time)
       log.warn("The first parameter must be a valid id or element");
       throw new Error("The first parameter must be a valid id or element");
     }
 
-    // the element can be a string. If so, it should be the id of an element e.g <div id="abcde"></div>
+    // the element param can be a string. If so, it should be the id of an element e.g <div id="abcde"></div>
     if (typeof element === "string" && isBrowser) {
-      log.info(
-        "Param was a string, so look for element with id of",
-        element
-      );
+      log.info("Param was a string, so look for an element with id of", element);
 
       element = document.getElementById(element);
     }
@@ -599,7 +81,7 @@ class Player {
       );
     }
 
-    // the only kind of iframe we support is our own, so it it is an iframe, check it is
+    // the only kind of iframe we support is our own, so if it is an iframe, check it is
     if (element.nodeName === "IFRAME") {
       if (!isVidbeoIframe(element)) {
         log.warn(
@@ -610,14 +92,27 @@ class Player {
         );
       }
     } else {
-      // ok, it's not an iframe, does it contain one?
+      // the element they want to use is not an iframe. So ... does it contain one?
       let iframe = element.querySelector("iframe");
       if (iframe != null) {
+        // yes
         element = iframe;
+      } else {
+        // no. So that means we will be making the iframe. And so at the very least
+        // we need to know which video ID to embed:
+        if (
+          options === null ||
+          typeof options.id !== "string" ||
+          !isIdValid(options.id)
+        ) {
+          // missing or invalid {id: ""}
+          log.warn("The options.id is missing or invalid");
+          throw new Error("The options.id is missing or invalid");
+        }
       }
     }
 
-    // do we have this one already? If so, no need to set it up again and stop now
+    // do we have this player already? If so, no need to set it up again and stop now
     if (weakmapPlayer.has(element)) {
       log.info(
         "This element is already known to this JS, so return the Player we already have for it"
@@ -649,13 +144,13 @@ class Player {
           return;
         }
 
-        // now we know the origin (which includes thee protocol) of the sender page, keep track of that:
+        // now we know the origin (which includes the protocol) of the sender page, keep track of that:
         if (thePlayer.origin === "*") {
           thePlayer.origin = message.origin;
           log.info("The origin is now known:", thePlayer.origin);
         }
 
-        // if the data is sent a string (old browsers?) it will be JSON, so parse it as we want an object:
+        // if the data is sent a string (old browsers) it will be JSON, so parse it as we want an object:
         if (typeof message.data === "string") {
           log.info(
             "The message data is a string so will parse it",
@@ -740,78 +235,50 @@ class Player {
       };
       // thePlayer.receivedMessage
 
-      // listen for messages:
-      log.info(
-        "Listen out for any messages sent from the embedded player"
-      );
-      thePlayer._window.addEventListener(
-        "message",
-        thePlayer.receivedMessage
-      );
+      log.info("Listening for any messages sent from the embedded player");
+      thePlayer._window.addEventListener("message", thePlayer.receivedMessage);
 
-      // if the element was NOT an iframe (like it was a div) we need to add an iframe
-      // to the page to embed the video in. That can be done based on the options in the second
+      // if the Player(element) was NOT an iframe (e.g it was a div) we need to add an iframe
+      // to the page to embed the video in that. Which video is based on the options in the second
       // parameter. The advantage of that approach is if params were added to the query string
-      // by the user, and one was changed or added, they would have to update every URL. Whereas
-      // done with JS, it's much easier to change the object:
+      // by the user, and one was later changed or added, they would have to update every URL. Whereas
+      // done with JS it's much easier to change an object:
       if (thePlayer.element.nodeName !== "IFRAME") {
         log.info(
-          "The element passed is NOT already an iframe, so need to make an iframe within it"
+          "The element passed is NOT already an iframe, so need to make an iframe within that element e.g div"
         );
 
-        // BUT before we make an iframe, people may pass wrong params like {abc: 123}. So need
+        // BUT before make the iframe, people may pass wrong params like {madeup: 123}. So need
         // to extract only the ones we actually support either in the query string (like colour) or
         // as iframe attributes (like width):
         let validOptions = extractValidEmbedParams(options);
 
-        // check whether required ones are present and whether certain conbinations are present too:
-
-        // make sure an id has been provided. If not, we don't know which video to embed in the iframe!
-        if (!isIdValid(validOptions.id)) {
-          // missing or invalid {id: ""}
-
-          // note: inside a Promise so don't throw an error. Instead reject the Promise:
-          log.warn("The video id is missing or invalid");
-          let error = new Error("The video id is missing or invalid");
-          error.name = "Error"; // could use if want to classify a type of error
-          reject(error);
-          return;
-        }
-
-        // we need EITHER a width AND height e.g 640 and 360 OR responsive set as true (which means we don't
-        // need a width and height set)
-        let sizing = false; // assume unknown/invalid
+        // the options MAY have a width AND height, OR have responsive set:
+        let sizing = "";
         if (
           validOptions.width &&
           validOptions.height &&
           !isNaN(validOptions.width) &&
           !isNaN(validOptions.height)
         ) {
-          // we have a width and a height, and both are numbers
+          // specified a width and a height, and both are numbers
           sizing = "fixed";
         } else if (typeof validOptions.responsive === "boolean") {
-          // we have a responsive preference set e.g true. It can be false too. It just needs to be set
-          sizing = "responsive";
+          // set a responsive preference
+          if (validOptions.responsive) {
+            sizing = "responsive"; // ok, confirmed
+          } else {
+            sizing = "manual"; // the user will take care of it as they have set responsive: false AND have not provided a width and height
+          }
         } else {
-          // hmm we need one or the other!
-
-          // note: inside a Promise so don't throw an error. Instead reject the Promise:
-          log.warn(
-            "You must provide either a value for width and height, or set responsive as true"
-          );
-          let error = new Error(
-            "You must provide either a value for width and height, or set responsive as true"
-          );
-          error.name = "Error"; // could use if want to classify a type of error
-          reject(error);
-          return;
+          sizing = "responsive"; // default is we handle it and make it responsive
         }
 
         // armed with the params we can build an iframe src URL and its attributes. So
         // e.g things like 'colour' go in the URL, and things like 'width' go in the iframe:
         let iframe = document.createElement("iframe");
         iframe.setAttribute("src", buildIframeSrc(validOptions)); // this will include e.g ?colour=ff0000
-        // how big should the iframe be? We need to set a width and height only if both are present:
+        // how big should the iframe be? We need to set the width and height only if both are present:
         if (sizing === "fixed") {
           iframe.setAttribute("width", validOptions.width);
           iframe.setAttribute("height", validOptions.height);
@@ -824,9 +291,9 @@ class Player {
           "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture;"
         );
 
-        // bonus: if the option of responsive is set, we add inline styles to the element. We make
-        // this optional as someone may have already done that with their own CSS
-        if (validOptions.responsive) {
+        // bonus: if the option of responsive is set as true, we add inline styles to their element. We make
+        // this optional as someone may have already done that with their own CSS and so would set { responsive: false }
+        if (sizing === "responsive") {
           element.style.position = "relative";
           element.style.paddingBottom = "56.25%"; // assume 16:9
           if (validOptions.aspectratio) {
@@ -872,11 +339,10 @@ class Player {
 
     // record the Promise and so can then call .ready() before call a method, and if it is ready, let that proceed:
     weakmapIsReady.set(this, onReady);
-
     weakmapPlayer.set(this.element, this);
 
     // ask the iframe if it's ready. Why, when it sends a 'ready' event? Well if there was an iframe already on the page
-    // that may well have *already* fired an event of 'ready'. And so we would not be aware of that happening. So
+    // that likely has *already* fired an event of 'ready'. And so we would not be aware of that happening. So
     // would wait forever for it. So doesn't hurt to double-check it is ready by asking, and if so, it will
     // send back a message to say so which we listen for above:
     if (this.element.nodeName === "IFRAME") {
@@ -888,9 +354,9 @@ class Player {
 
     // bonus:
     // there is one player feature that likely will fail when controlled externally using this player API: fullscreen.
-    // That is because the browser complains it needs user interaction. So we control it further down (rather than send
+    // Why? Because the browser complains it needs user interaction to do that. So we control it further down (rather than send
     // a message to the player, like how other methods work). But as a result, the HTML5 video event of fullscreenchange
-    // does not fire and so the player does not know it's now in fullscreen. So it's UI is wrong. So need to tell it:
+    // does not fire and so the player does not know it's now in fullscreen. So its UI is wrong. So need to tell it:
     if (document.fullscreenEnabled) {
       // ah, the page supports the fullscreen API so it should work
       log.info(
@@ -932,7 +398,7 @@ class Player {
             "Send a message to the iframe to tell it the full-screen state has changed as its own HTML5 video event will not fire",
             isFullscreen
           );
-          postMessage(thePlayer, "updateFullscreen", isFullscreen); // so the method is updateFullscreen and the value is whether full-screen now
+          postMessage(thePlayer, "updateFullscreen", isFullscreen); // the method is updateFullscreen and value is whether full-screen now
         });
       };
 
@@ -967,7 +433,7 @@ class Player {
     let thisRef = this;
     return new Promise(function (resolve, reject) {
       return thisRef
-        .ready()
+        .ready() // player.ready()
         .then(function () {
           // BUT of course we don't need to send a message to the iframe: we set
           // fullscreen here. So resolve/reject the Promise depending on whether it worked or not, and so
@@ -1004,7 +470,7 @@ class Player {
         })
         .catch(reject);
     });
-  };
+  }
 
   /**
    * For internal use
@@ -1024,7 +490,7 @@ class Player {
     let thisRef = this;
     return new Promise(function (resolve, reject) {
       return thisRef
-        .ready()
+        .ready() // player.ready()
         .then(function () {
           // BUT unlike other methods, we don't need to send a message to the iframe. We set
           // fullscreen here. So instead resolve/reject the Promise depending on whether that worked or not, and that means
@@ -1068,7 +534,7 @@ class Player {
         })
         .catch(reject);
     });
-  };
+  }
 
   /**
    * For internal use: this should not be called externally by a client page (though in theory
@@ -1136,7 +602,7 @@ class Player {
         })
         .catch(reject);
     });
-  };
+  }
 
   /**
    * exitFullscreen
@@ -1160,7 +626,7 @@ class Player {
     }
 
     return this.method("exitFullscreen");
-  };
+  }
 
   /**
    * getBuffered
@@ -1171,7 +637,7 @@ class Player {
     log.info("Player.getBuffered)");
 
     return this.method("getBuffered");
-  };
+  }
 
   /**
    * getColour
@@ -1182,7 +648,7 @@ class Player {
     log.info("Player.getColour()");
 
     return this.method("getColour");
-  };
+  }
 
   /**
    * getCurrentTime
@@ -1193,7 +659,7 @@ class Player {
     log.info("Player.getCurrentTime()");
 
     return this.method("getCurrentTime");
-  };
+  }
 
   /**
    * getDuration
@@ -1204,7 +670,7 @@ class Player {
     log.info("Player.getDuration()");
 
     return this.method("getDuration");
-  };
+  }
 
   /**
    * getEmbed
@@ -1215,7 +681,7 @@ class Player {
     log.info("Player.getEmbed()");
 
     return this.method("getEmbed");
-  };
+  }
 
   /**
    * getEnded
@@ -1226,7 +692,7 @@ class Player {
     log.info("Player.getEnded()");
 
     return this.method("getEnded");
-  };
+  }
 
   /**
    * getFullscreen
@@ -1237,7 +703,7 @@ class Player {
     log.info("Player.getFullscreen()");
 
     return this.method("getFullscreen");
-  };
+  }
 
   /**
    * getHeight
@@ -1248,7 +714,7 @@ class Player {
     log.info("Player.getHeight()");
 
     return this.method("getHeight");
-  };
+  }
 
   /**
    * getId
@@ -1259,7 +725,7 @@ class Player {
     log.info("Player.getId()");
 
     return this.method("getId");
-  };
+  }
 
   /**
    * getLoop
@@ -1270,7 +736,7 @@ class Player {
     log.info("Player.getLoop()");
 
     return this.method("getLoop");
-  };
+  }
 
   /**
    * getMuted
@@ -1281,7 +747,7 @@ class Player {
     log.info("Player.getMuted()");
 
     return this.method("getMuted");
-  };
+  }
 
   /**
    * getPaused
@@ -1292,7 +758,7 @@ class Player {
     log.info("Player.getPaused()");
 
     return this.method("getPaused");
-  };
+  }
 
   /**
    * getPlaybackRate
@@ -1303,7 +769,7 @@ class Player {
     log.info("Player.getPlaybackRate()");
 
     return this.method("getPlaybackRate");
-  };
+  }
 
   /**
    * getPlayed
@@ -1314,7 +780,7 @@ class Player {
     log.info("Player.getPlayed()");
 
     return this.method("getPlayed");
-  };
+  }
 
   /**
    * getQualities
@@ -1325,7 +791,7 @@ class Player {
     log.info("Player.getQualities()");
 
     return this.method("getQualities");
-  };
+  }
 
   /**
    * getQuality
@@ -1336,7 +802,7 @@ class Player {
     log.info("Player.getQuality()");
 
     return this.method("getQuality");
-  };
+  }
 
   /**
    * getSeekable
@@ -1347,7 +813,7 @@ class Player {
     log.info("Player.getSeekable()");
 
     return this.method("getSeekable");
-  };
+  }
 
   /**
    * getSeeking
@@ -1358,7 +824,7 @@ class Player {
     log.info("Player.getSeeking()");
 
     return this.method("getSeeking");
-  };
+  }
 
   /**
    * getTracks
@@ -1369,7 +835,7 @@ class Player {
     log.info("Player.getTracks()");
 
     return this.method("getTracks");
-  };
+  }
 
   /**
    * getTitle
@@ -1380,7 +846,7 @@ class Player {
     log.info("Player.getTitle()");
 
     return this.method("getTitle");
-  };
+  }
 
   /**
    * getUrl
@@ -1391,7 +857,7 @@ class Player {
     log.info("Player.getUrl()");
 
     return this.method("getUrl");
-  };
+  }
 
   /**
    * getVolume
@@ -1402,7 +868,7 @@ class Player {
     log.info("Player.getVolume()");
 
     return this.method("getVolume");
-  };
+  }
 
   /**
    * getWidth
@@ -1413,7 +879,7 @@ class Player {
     log.info("Player.getWidth()");
 
     return this.method("getWidth");
-  };
+  }
 
   /**
    * The client page can listen for events and when they occur, call a callback function
@@ -1456,7 +922,7 @@ class Player {
       );
       this.method("off", event).catch(function () { });
     }
-  };
+  }
 
   /**
    * The client page can listen for events and when they occur, call a callback function
@@ -1506,7 +972,7 @@ class Player {
 
     log.info("Player.on() record the callback function for", event);
     saveCallback(this, "event:" + event, callback);
-  };
+  }
 
   /**
    * pause
@@ -1517,7 +983,7 @@ class Player {
     log.info("Player.pause()");
 
     return this.method("pause");
-  };
+  }
 
   /**
    * play
@@ -1528,7 +994,7 @@ class Player {
     log.info("Player.play()");
 
     return this.method("play");
-  };
+  }
 
   /**
    * Ask if the player is ready. This can then be used like player.ready().method()
@@ -1554,7 +1020,7 @@ class Player {
 
     // return a Promise
     return Promise.resolve(promise);
-  };
+  }
 
   /**
    * requestFullscreen
@@ -1585,7 +1051,7 @@ class Player {
     }
 
     return this.method("requestFullscreen");
-  };
+  }
 
   /**
    * setColour
@@ -1597,7 +1063,7 @@ class Player {
     log.info("Player.setColour()", value);
 
     return this.method("setColour", value);
-  };
+  }
 
   /**
    * setCurrentTime
@@ -1609,7 +1075,7 @@ class Player {
     log.info("Player.setCurrentTime()", value);
 
     return this.method("setCurrentTime", value);
-  };
+  }
 
   /**
    * setLoop
@@ -1621,7 +1087,7 @@ class Player {
     log.info("Player.setLoop()", value);
 
     return this.method("setLoop", value);
-  };
+  }
 
   /**
    * setMuted
@@ -1633,7 +1099,7 @@ class Player {
     log.info("Player.setMuted()", value);
 
     return this.method("setMuted", value);
-  };
+  }
 
   /**
    * setPlaybackRate
@@ -1645,7 +1111,7 @@ class Player {
     log.info("Player.setPlaybackRate()", value);
 
     return this.method("setPlaybackRate", value);
-  };
+  }
 
   /**
    * setQuality
@@ -1657,7 +1123,7 @@ class Player {
     log.info("Player.setQuality()", value);
 
     return this.method("setQuality", value);
-  };
+  }
 
   /**
    * setVolume
@@ -1669,7 +1135,7 @@ class Player {
     log.info("Player.setVolume()", value);
 
     return this.method("setVolume", value);
-  };
+  }
 }
 
 export default Player;
