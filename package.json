@@ -3,7 +3,6 @@
     "version": "1.0.0",
     "description": "Control a player embedded in an iframe",
     "author": "Vidbeo <https://www.vidbeo.com>",
-    "private": true,
     "repository": "vidbeo/player-api",
     "keywords": [
         "vidbeo",
@@ -17,10 +16,13 @@
         "format": "prettier 'src/**/*.js' 'test/**/*.js' --write",
         "test": "nyc --reporter=text ava",
         "build": "rollup --config",
-        "watch:build": "rollup --config --watch --environment STAGE:local"
+        "build:local": "yalc push",
+        "watch:build": "rollup --config --watch --environment STAGE:local",
+        "prepublish:public": "npm run build && npm run bump-version",
+        "publish:public": "npm publish --access public"
     },
-    "main": "dist/player.js",
-    "module": "dist/player.es.js",
+    "main": "dist/api.js",
+    "module": "dist/api.es.js",
     "files": [
         "dist",
         "README"

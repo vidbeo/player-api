@@ -1,5 +1,5 @@
 import { terser } from 'rollup-plugin-terser'; // remove whitespace, comments etc from production build
-import replace from '@rollup/plugin-replace'; // add variables to the bundle
+//import replace from '@rollup/plugin-replace'; // add variables to the bundle
 import { nodeResolve } from '@rollup/plugin-node-resolve'; // if want to use commonjs modules
 import commonjs from '@rollup/plugin-commonjs'; // if want to use commonjs modules
 import babel from "@rollup/plugin-babel"; // for transpiling for UMD
@@ -11,17 +11,17 @@ console.log(`Create a ${isLocal ? 'development' : 'production'} bundle`);
 export default [
   // UMD
   {
-    input: './src/player.js',
+    input: './src/api.js',
     watch: {
       include: './src/**',
       clearScreen: false
     },
     plugins: [
-      nodeResolve(),
       commonjs(), // else get 'default' isnot exported errors
+      nodeResolve(),
       babel({
         babelHelpers: "bundled",
-      }), // transpile for umd
+      }),
       /*
       replace({
         preventAssignment: true,
@@ -45,7 +45,7 @@ export default [
       })
     ],
     output: {
-      file: './dist/player.js',
+      file: './dist/api.js',
       format: 'umd',  // wraps it with AMD/CommonJS
       name: 'Vidbeo.Player',
       sourcemap: isLocal ? 'inline' : false
@@ -54,14 +54,17 @@ export default [
 
   // ESM and CJS (don't transpile or minify)
   {
-    input: './src/player.js',
+    input: './src/api.js',
     watch: {
       include: './src/**',
       clearScreen: false
     },
     plugins: [
-      nodeResolve(),
       commonjs(),
+      nodeResolve(),
+      babel({
+        babelHelpers: "bundled",
+      }),
       /*
       replace({
         preventAssignment: true,
@@ -74,7 +77,7 @@ export default [
     ],
     output: [
       {
-        file: './dist/player.es.js',
+        file: './dist/api.es.js',
         format: 'es',
         sourcemap: isLocal ? 'inline' : false
       }

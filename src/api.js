@@ -67,7 +67,10 @@ class Player {
 
     // the element param can be a string. If so, it should be the id of an element e.g <div id="abcde"></div>
     if (typeof element === "string" && isBrowser) {
-      log.info("Param was a string, so look for an element with id of", element);
+      log.info(
+        "Param was a string, so look for an element with id of",
+        element
+      );
 
       element = document.getElementById(element);
     }
