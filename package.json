@@ -34,7 +34,9 @@
             "./test/helpers/setup-browser-env.js"
         ],
         "babel": true,
-        "inherit": true
+        "inherit": true,
+        "timeout": "1m",
+        "failFast": true
     },
     "babel": {
         "presets": [
