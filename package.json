@@ -11,8 +11,8 @@
         "iframe"
     ],
     "scripts": {
-        "clean": "rimraf dist/*",
-        "prebuild": "npx run clean",
+        "clean": "node_modules/rimraf/bin.js dist/*",
+        "prebuild": "npm run clean",
         "format": "prettier 'src/**/*.js' 'test/**/*.js' --write",
         "test": "nyc --reporter=text ava",
         "build": "rollup --config",
