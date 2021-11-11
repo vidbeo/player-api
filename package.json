@@ -19,7 +19,8 @@
         "build:local": "yalc push",
         "watch:build": "rollup --config --watch --environment STAGE:local",
         "prepublish:public": "npm run build && npm run bump-version",
-        "publish:public": "npm publish --access public"
+        "publish:public": "npm publish --access public",
+        "rimraf": "./node_modules/rimraf/bin.js"
     },
     "main": "dist/api.js",
     "module": "dist/api.es.js",
