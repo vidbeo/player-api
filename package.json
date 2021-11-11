@@ -12,15 +12,14 @@
     ],
     "scripts": {
         "clean": "rimraf dist/*",
-        "prebuild": "npm run clean",
+        "prebuild": "npx run clean",
         "format": "prettier 'src/**/*.js' 'test/**/*.js' --write",
         "test": "nyc --reporter=text ava",
         "build": "rollup --config",
         "build:local": "yalc push",
         "watch:build": "rollup --config --watch --environment STAGE:local",
         "prepublish:public": "npm run build && npm run bump-version",
-        "publish:public": "npm publish --access public",
-        "rimraf": "./node_modules/rimraf/bin.js"
+        "publish:public": "npm publish --access public"
     },
     "main": "dist/api.js",
     "module": "dist/api.es.js",
