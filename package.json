@@ -5,7 +5,7 @@
     "author": "Vidbeo <https://www.vidbeo.com>",
     "repository": {
         "type": "git",
-        "url": "https://github.com/vidbeo/player-api"
+        "url": "https://github.com/vidbeo/player-api.git"
     },
     "homepage": "https://github.com/vidbeo/player-api",
     "keywords": [
