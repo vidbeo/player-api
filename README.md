@@ -4,7 +4,7 @@ Use our Player API to control a player embedded on your site using JavaScript.
 
 ## Installation
 
-Since your page and our embed code are on different domains, you need to add this script to your page to enable them to communicate. This loads the latest version from our CDN:
+Since your page and our embed code are on different domains, you need to add our script to your page to enable them to communicate. This loads the latest version from our CDN:
 
 ```html
 <script type="text/javascript" src="https://player.vidbeo.com/sdk/api.js"></script>
