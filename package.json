@@ -3,7 +3,11 @@
     "version": "1.0.0",
     "description": "Control a player embedded in an iframe",
     "author": "Vidbeo <https://www.vidbeo.com>",
-    "repository": "vidbeo/player-api",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/vidbeo/player-api"
+    },
+    "homepage": "https://github.com/vidbeo/player-api",
     "keywords": [
         "vidbeo",
         "player",
