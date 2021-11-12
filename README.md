@@ -18,7 +18,7 @@ npm install @vidbeo/player-api
 
 ## Initialisation
 
-If you _already_ have one of our iframes on your page, you simply need to pass a reference to that _Element_. For example:
+If you _already_ have one of our iframes on your page, you simply need to pass a reference to that element. For example:
 
 ```html
 <script type="text/javascript" src="https://player.vidbeo.com/sdk/api.js"></script>
@@ -28,11 +28,9 @@ var player = new Vidbeo.Player(iframe);
 </script>
 ```
 
-If you _don't_ already have one of our iframes on your page, we can add one for you. You just need to have an empty _div_ Element into which the video will be embedded.
+If you _don't_ already have one of our iframes on your page, we can add one for you. You just need to have an empty _div_ into which the video will be embedded.
 
-Pass its ID as the first parameter.
-
-And of course we need to know which video to embed, so pass the video's unique ID within the options parameter (you can use additional options to customise it - here we set a _width_ and _height_ too):
+Pass the video's ID within the options (here we are setting a _width_ and _height_ to embed it at too):
 
 ```html
 <div id="put-video-here"></div>
